@@ -1,82 +1,82 @@
-# core imports
-from core.security import encrypt, decrypt, time_ago
-from core.utils import structure_message
+import asyncio, websockets, json, os, string, sys
+from utils import get_config, colored, encrypt, decrypt
 
-# standard imports
-import asyncio, tomllib, json, time, os, platform
-
-# non standard imports
-import websockets
-
-with open('config.toml', 'rb') as tconfig:
-    config = tomllib.load(tconfig)
-
-WS_URL = 'wss://hack.chat/chat-ws' # yeah it uses hack chat, cry about it
-SUSPICIONS = []
-CHANNEL = config['vexchat']['channel']
-USERNAME = config['vexchat']['username']
-
-# init message (sends a join message along with your operating system) 
-# (only linux is officaly supported but could work on other systems and could be easily be modified to do so)
-osname = platform.system().lower() # Windows, Linux, Darwin, ...BSD
-INIT_MSG = structure_message(f'os:{osname} / has joined.,.')
-
-if ' ' in USERNAME or not USERNAME:
-    print('invalid username remove spaces')
+if '--keygen' in sys.argv:
+    aestemp = os.urandom(32).hex()
+    charset = string.ascii_letters + string.digits
+    channel = ''.join(charset[b % len(charset)] for b in os.urandom(32))
+    print(f'aes256: {aestemp}\nchannel: {channel}')
     exit()
 
-key_hex = config['aes']['key']
+def reload_config():
+    global WS_URL, CHANNEL, USERNAME, ENABLE_INPUT, ENABLE_COLOR, ENABLE_ENCRYPTION, ENCRYPTION_KEY, CLIENT_SIDE_COLOR
+    WS_URL, CHANNEL, USERNAME, ENABLE_INPUT, ENABLE_COLOR, ENABLE_ENCRYPTION, ENCRYPTION_KEY, CLIENT_SIDE_COLOR = get_config()
 
-os.system('cls' if os.name == 'nt' else 'clear')
+reload_config()
 
-async def chat():
+if ENABLE_ENCRYPTION:
+    trueuser = decrypt(ENCRYPTION_KEY, USERNAME) # (get_config encrypts username this decrypts it) seems bad but also acts as a test to see if encryption / decryption is working
+else:
+    trueuser = USERNAME
+
+if not ENABLE_COLOR:
+    def colored(text, color): # reroutes the coloring function to just print text as is if color mode is disabled
+        return text
+
+async def main():
     async with websockets.connect(WS_URL) as ws:
-        await ws.send(json.dumps({"cmd": "join", "channel": CHANNEL, "nick": USERNAME}))
-        print(f"Connected to #{CHANNEL} as {USERNAME}")
-        await ws.send(json.dumps({"cmd": "chat", "text": encrypt(key_hex, INIT_MSG)}))
+        join_msg = {"cmd": "join", "channel": CHANNEL, "nick": USERNAME}
+        await ws.send(json.dumps(join_msg))
 
-        async def recv_loop():
-            async for message in ws:
-                try:
-                    data = json.loads(message)
-                    if data.get("cmd") == "chat":
-                        nick = data["nick"]
-                        text = decrypt(key_hex, data["text"])
-                        sender = "(you)" if nick == USERNAME else nick
-
-                        timestamp_str, _, message = text.partition("!*")
-                        timestamp = int(float(timestamp_str))
-
-                        if 'joined.,.' not in message:
-                            print(f"[{time_ago(timestamp)}] {sender}: {message}")
-                        else:
-                            senders_os = message.split('os:')[1].split(' /')[0]
-                            print(f"\033[32m{sender}: has joined on {senders_os}\033[0m")
-
-                        if time_ago(timestamp, raw_seconds=True) > 5:
-                            sus_temp = f'[WARNING] Possible replay attack detected on message: "{message}" from {sender}'
-                            print(sus_temp)
-                            SUSPICIONS.append(sus_temp)
-
-                    elif data.get("cmd") in ("warn", "info"):
-                        print(f"[System] {data['text']}")
-                except Exception as e:
-                    print(f"[!] Error decoding message: {e}")
-                    print(f"[!] Raw message: {message}")
-
-        async def input_loop():
+        async def send_loop(): # handles input loop and outgoing messages
             while True:
-                raw_input = await asyncio.get_event_loop().run_in_executor(None, input, "> ")
-                msg = raw_input.strip().replace('!*', '')
-                if not msg:
-                    continue
-                msg = f"{time.time()}!*{msg}"
-                enc = encrypt(key_hex, msg)
-                await ws.send(json.dumps({"cmd": "chat", "text": enc}))
+                if not ENABLE_INPUT: # hotswap config file fix for input disabling
+                    break
+                print(colored(f"{trueuser}: ", CLIENT_SIDE_COLOR), end='', flush=True)
+                line = await asyncio.to_thread(input)
+                if ENABLE_ENCRYPTION:
+                    line = encrypt(ENCRYPTION_KEY, line) # encrypts your message
+                if line.strip() and not line.startswith('!'):
+                    await ws.send(json.dumps({"cmd": "chat", "text": line}))
+                else:
+                    if line == '!config':
+                        reload_config()
 
-        await asyncio.gather(recv_loop(), input_loop())
+        send_task = asyncio.create_task(send_loop()) if ENABLE_INPUT else None
 
-try:
-    asyncio.run(chat())
-except KeyboardInterrupt:
-    exit()
+        async for message in ws:
+            data = json.loads(message)
+            if data.get('nick') != USERNAME:
+                cmd = data.get("cmd")
+
+                if cmd == "onlineAdd":
+                    user = data.get("nick")
+                    if ENABLE_ENCRYPTION:
+                        user = decrypt(ENCRYPTION_KEY, user)
+                    print(f"User joined: {user}")
+
+                elif cmd == "chat":
+                    user = data.get("nick")
+                    text = data.get("text")
+                    color = data.get("color", "ffffff")
+                    if ENABLE_ENCRYPTION:
+                        # decrypt in seperate try/fail blocks so if text is encrypted and user isnt text still gets decrypted
+                        try:
+                            user = decrypt(ENCRYPTION_KEY, user)
+                        except Exception:
+                            pass
+
+                        try:
+                            text = decrypt(ENCRYPTION_KEY, text)
+                        except Exception:
+                            pass
+
+
+                    content = f'{user}: {text}'
+                    print(colored(f'\n{content}', color))
+                    print(colored(f"{trueuser}: ", CLIENT_SIDE_COLOR), end='', flush=True) # prompt bug fix to print "username: " after processing a message
+
+        if send_task:
+            send_task.cancel()
+
+asyncio.run(main())
