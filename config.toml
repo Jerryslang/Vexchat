@@ -2,7 +2,7 @@
 # reloading with variables that are not reloadable can cause issues with the script
 
 [profile]
-username = "Noface"
+username = "user123"
 channel = "hbM2YPbvE0Gcq1eaH4cTLfdcghCBBADV"
 
 [settings]
