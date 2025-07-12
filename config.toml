@@ -1,6 +1,16 @@
-[vexchat]
-username="enter-your-username-here"
-channel="vex-lounge"
+# if the variable has (reloadable) next to it then it can be changed and then reloaded using the !config command in the input loop
+# reloading with variables that are not reloadable can cause issues with the script
 
-[aes]
-key="17a25f72e5912f366284e4c165205276feee9c0a5dc6ea3dbb236f6fe52210e1"
+[profile]
+username = "Noface"
+channel = "hbM2YPbvE0Gcq1eaH4cTLfdcghCBBADV"
+
+[settings]
+server_address = "wss://hack.chat/chat-ws"
+enable_input = true #(reloadable)
+enable_256_bit_color = true #(reloadable)
+client_side_color="ffffff" # (format:hex) (reloadable)
+
+[security]
+enable_encryption = true
+aes_256_key = "7c5d7a92972a85c33981d753d67dcb23910cd0ab67419ac6ac0a426630164a45" # (format:hex)
